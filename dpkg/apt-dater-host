@@ -119,8 +119,16 @@ else {
 
 
 sub do_refresh() {
-    if(system(($GETROOT ? $GETROOT : ()), $DPKGTOOL, 'update')) {
-	print "\nADPERR: Failed to execute '$GETROOT $DPKGTOOL update' ($?).\n";
+    my @RefreshCmd;
+    if ($GETROOT) { push(@RefreshCmd ,$GETROOT); }
+    if ( -x '/usr/sbin/univention-upgrade' ) {
+        push(@RefreshCmd ,'/usr/sbin/univention-upgrade', '--check');
+    } else {
+	push(@RefreshCmd, $DPKGTOOL, 'update');
+    }
+
+    if(system(@RefreshCmd)) {
+	print "\nADPERR: Failed to execute '@RefreshCmd' ($?).\n";
 	exit(1);
     }
 }
@@ -314,28 +322,41 @@ sub do_status() {
 }
 
 sub do_upgrade() {
-    my $UpgradeCmd = "$DPKGTOOL ";
-    $UpgradeCmd .= '-o Aptitude::Delete-Unused=false ' if($DPKGTOOL eq 'aptitude');
-    $UpgradeCmd .= $APTUPGRADE;
-
-    # drop -y if any packages would be removed
-    if($ASSUMEYES) {
-	unless(open(HAPT, "$UpgradeCmd --simulate --assume-yes |")) {
-	    print "\nADPERR: Failed to execute '$UpgradeCmd --simulate' ($!).\n";
+    my $UpgradeCmd;
+    if ( -x '/usr/sbin/univention-upgrade' ) {
+	if ( -x '/usr/bin/screen' ) {
+	    $UpgradeCmd='/usr/bin/screen /usr/sbin/univention-upgrade --ignoressh';
+	    $UpgradeCmd .= ' --noninteractive' if($ASSUMEYES);
+	} else {
+	    print "\nADPERR: please install 'screen'\n";
 	    exit(1);
 	}
-	while(<HAPT>) {
-	    chomp;
-	
-	    if(/^The following packages will be REMOVED:/) {
-		$ASSUMEYES = undef;
-		last;
-	    }
-	    last if(/^\d+ upgraded, \d+ newly installed/);
-	}
-	close(HAPT);
+    } elsif ( -x '/usr/bin/pmgupgrade' ) {
+        $UpgradeCmd='/usr/bin/pmgupgrade';
+    } else {
+	$UpgradeCmd = "$DPKGTOOL ";
+    	$UpgradeCmd .= '-o Aptitude::Delete-Unused=false ' if($DPKGTOOL eq 'aptitude');
+    	$UpgradeCmd .= $APTUPGRADE;
 
-	$UpgradeCmd .= ' --assume-yes' if($ASSUMEYES);
+    	# drop -y if any packages would be removed
+    	if($ASSUMEYES) {
+    	    unless(open(HAPT, "$UpgradeCmd --simulate --assume-yes |")) {
+    	        print "\nADPERR: Failed to execute '$UpgradeCmd --simulate' ($!).\n";
+    	        exit(1);
+    	    }
+    	    while(<HAPT>) {
+    	        chomp;
+    	    
+    	        if(/^The following packages will be REMOVED:/) {
+    	    	$ASSUMEYES = undef;
+    	    	last;
+    	        }
+    	        last if(/^\d+ upgraded, \d+ newly installed/);
+    	    }
+    	    close(HAPT);
+
+    	    $UpgradeCmd .= ' --assume-yes' if($ASSUMEYES);
+    	}
     }
 
     system("$GETROOT $UpgradeCmd");
